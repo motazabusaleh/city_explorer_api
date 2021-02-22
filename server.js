@@ -1,8 +1,9 @@
 'use strict';
+
 // require statements (importing packages)
 let express = require('express');
 const cors = require('cors');
-const database = require('mime-db');
+let superagent = require('superagent');
 // initialization and configuration
 let app = express();
 app.use(cors());
@@ -13,29 +14,84 @@ const PORT = process.env.PORT;
 // routes - endpoints 
 app.get('/location', handlerLocation);
 app.get('/weather', weatherHandler);
+app.get('*', errorHandler);
 
 
-
-// locations rendering
-
+// handlers functions
 function handlerLocation(req, res) {
     let searchQuery = req.query.city;
-    let locationObject = getLocationData(searchQuery)
-    res.status(200).send(locationObject);
+    getLocationData(searchQuery, res).then(data => {
+        res.status(200).send(data);
+    });
 }
 
+function weatherHandler(req, res) {
+    let weatherObject = getWeatherData(searchQuery, res).then(data =>{
+        res.status(200).send(weatherObject);
+    })
+    
+}
+
+function errorHandler(req, res) {
+    res.status(404).send({ status: 500, responseText: "Sorry, something went wrong" });
+}
+
+
+
+// getting specific data from the json
 
 function getLocationData(searchQuery) {
-    let locationData = require('./data/location.json');
-    let longitude = locationData[0].lon;
-    let latitdue = locationData[0].lat;
-    let displayName = locationData[0].display_name;
-    let responseobject = new CityLocation(searchQuery, displayName, latitdue, longitude);
-    return responseobject;
+    const query = {
+        key: process.env.GEOCODE_API_KEY,
+        q: searchQuery,
+        limit: 1,
+        format: 'json'
+    };
+
+    let url = 'https://us1.locationiq.com/v1/search.php';
+    return superagent.get(url).query(query).then(data => {
+        try {
+
+
+            let longitude = data.body[0].lon;
+            let latitude = data.body[0].lat;
+            let displayName = data.body[0].display_name;
+            let responseObject = new CityLocation(searchQuery, displayName, latitude, longitude);
+
+            return responseObject;
+        } catch (error) {
+            res.status(500).send(error);
+        }
+    }).catch(error => {
+        res.status(500).send('There was an error getting data from API ' + error);
+    });
 }
-app.listen(PORT, () => {
-    console.log("the app is listening to port ..." + PORT);
-});
+
+function getWeatherData() {
+    const query = {
+        key: process.env.WEATHER_API_KEY,
+        q: searchQuery,
+        limit: 1,
+        format: 'json'
+    };
+
+    const url = "https://api.weatherbit.io/v2.0/forecast/daily";
+    return superagent.get(url).query(query)
+    .then( data => {
+      const weatherSummaries = data.body.daily.data.map(day => {
+        return new Weather(day);
+      });
+      response.status(200).json(weatherSummaries);
+    })
+    .catch( ()=> {
+      errorHandler('So sorry, something went really wrong', request, response);
+    });
+}
+
+
+
+
+
 
 //constructer 
 function CityLocation(searchQuery, displayName, lat, lon) {
@@ -44,31 +100,6 @@ function CityLocation(searchQuery, displayName, lat, lon) {
     this.latitdue = lat;
     this.longitude = lon;
 }
-
-// weather rendering 
-function weatherHandler(req, res){
-    let weatherObject = getWeatherData();
-    res.status(200).send(weatherObject);
-}
-
-function getWeatherData() {
-    let weatherData = require('./data/weather.json');
-    let weatherDataT = weatherData.data;
-    var arrayNew = [];
-    for (let i = 0; i < weatherDataT.length; i++) {
-        var description = weatherDataT[i].weather.description;
-        var date = weatherDataT[i].valid_date; 
-        var dateConvert= new Date(date);
-        let stringy = dateConvert.toDateString();
-        let weatherNew = new Weather(description , stringy );
-         arrayNew.push(weatherNew);
-    } 
-
-    return arrayNew;
-}
-
-
-
 
 function Weather(forecast, time) {
     this.forecast = forecast;
@@ -79,5 +110,8 @@ function Weather(forecast, time) {
 
 
 
+app.listen(PORT, () => {
+    console.log("the app is listening to port ..." + PORT);
+});
 
 

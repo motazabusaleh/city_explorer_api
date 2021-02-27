@@ -1,113 +1,227 @@
-'use strict';
-
-//App Libraries
-const express = require('express');
-// cors = Cross Origin resource sharing
+// require statements (importing packages)
+let express = require('express');
 const cors = require('cors');
-//dotenv (read our enviroment variable)
-const dot = require('dotenv');
-const { request } = require('http');
-const { response } = require('express');
-dot.config();
-const superAgent0 = require('superagent');
-
-//App setup
-const PORT = process.env.PORT || 3000;
-const app = express();
+let superagent = require('superagent');
+const postgress = require('pg');
+// initialization and configuration
+let app = express(); //init server
 app.use(cors());
+require('dotenv').config();
+const client = new postgress.Client(process.env.DATABASE_URL);
+const PORT = process.env.PORT;
 
-// Routes Definitions
-app.get('/', handlerHomeRoute);
-app.get('/location', locationHandler);
+// const client = new postgress.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+// routes - endpoints 
+app.get('/location', handlerLocation);
 app.get('/weather', weatherHandler);
 app.get('/parks', parkHandler)
-app.get('*', pageNotFoundHandler);
-app.use(errorHandler);
+app.get('*', errorHandler);
 
 
-// handler Functions
+// handlers functions
+function handlerLocation(req, res) {
+    // console.log("i am request ",req.query);
+    let searchQuery = req.query.city;
+    getLocationData(searchQuery, res);
+}
 
-//this functions assure the server is working
-function handlerHomeRoute(request, response) {
-    response.status(200).send('you did a great job');
+function weatherHandler(req, res) {
+    //console.log(req.query);
+    let searchQuery = req.query;
+    getWeatherData(searchQuery, res);
+
+}
+function parkHandler(req, res) {
+    let searchQuery = req.query;
+    //console.log(req);
+    getParkData(searchQuery, res);
+
+}
+
+function errorHandler(req, res) {
+    res.status(404).send({ status: 500, responseText: "Sorry, something went wrong 38" });
 }
 
 
-function locationHandler(request, response) {
-    const cityName = request.query.city;
-    let LocationKey = process.env.GEOCODE_API_KEY;
-    let url = `https://eu1.locationiq.com/v1/search.php?key=${LocationKey}&q=${cityName}&format=json&limit=1`;
 
-    superAgent0.get(url).then(data => {
-        const locationObj = new Location(cityName, data.body);
-        response.send(locationObj);
-    }).catch(() => {
-        errorHandler('error in getting data from Api server ', request, response);
-    });
+// getting specific data from the json
+
+function getLocationData(searchQuery, res) {
+    // if location exist in db then get location from db else get location from api and store it in db
+    const dbQuery = `select * from city where search_query='${searchQuery}'`;
+    client.query(dbQuery).then(data => {
+        if (data.rowCount!=0) {
+            // data in db
+            const result = data.rows[0];
+            // console.log("hello i am the body ",result)
+            var longitdue = result.lon;
+            var latitdue = result.lat;
+            var dispalyName = result.display_name;
+
+            let cityLocation = new CityLocation(searchQuery, dispalyName, latitdue, longitdue);
+            res.status(200).send(cityLocation);    
+        }
+        else {
+            const query = {
+                key: process.env.GEOCODE_API_KEY,
+                city: searchQuery,
+                limit: 1,
+                format: 'json'
+            };
+
+            let url = `https://us1.locationiq.com/v1/search.php?`;
+            superagent.get(url).query(query).then(data => {
+                const result = data.body[0];
+                // console.log("hello i am the body ",result)
+                var longitdue = result.lon;
+                var latitdue = result.lat;
+                var dispalyName = result.display_name;
+
+                let cityLocation = new CityLocation(searchQuery, dispalyName, latitdue, longitdue);
+                // console.log("hello i am city location",cityLocation)
+                //insert
+                const dbQuery_insert =`INSERT INTO city(search_query,formatted_query,latitude,longitude) VALUES('${searchQuery}','${dispalyName}',${latitdue},${longitdue})`;
+                client.query(dbQuery_insert).then(data=>{
+                    console.log("succesfully inserted in db");
+                })
+                res.status(200).send(cityLocation);
+            }).catch(error => {
+                //res.status(500).send('There was an error getting data from API ' + error);
+            });
+            
+        }
+       
+    }).catch(error => {
+        console.log(error)
+    })
+
+    // const query = {
+    //     key: process.env.GEOCODE_API_KEY,
+    //     city: searchQuery,
+    //     limit: 1,
+    //     format: 'json'
+    // };
+
+    // let url = `https://us1.locationiq.com/v1/search.php?`;
+    // superagent.get(url).query(query).then(data => {
+    //     const result = data.body[0];
+    //     // console.log("hello i am the body ",result)
+    //     var longitdue = result.lon;
+    //     var latitdue = result.lat;
+    //     var dispalyName = result.display_name;
+
+    //     let cityLocation = new CityLocation(searchQuery, dispalyName, latitdue, longitdue);
+    //     // console.log("hello i am city location",cityLocation)
+
+    //     res.status(200).send(cityLocation);
+    // }).catch(error => {
+    //     //res.status(500).send('There was an error getting data from API ' + error);
+    // });
 }
-function weatherHandler(request, response) {
-    let WeatherKey = process.env.WEATHER_API_KEY;
-    const cityWeatherName = request.query.search_query;
-    let url = `https://api.weatherbit.io/v2.0/forecast/daily?city=${cityWeatherName}&key=${WeatherKey}&limit=1`;
 
-    superAgent0.get(url).then(weatherData => {
-        let weatherDataMap = weatherData.body.data.map(element => {
-            const weatherObject = new Weather(element);
-            return weatherObject;
+function getWeatherData(searchQuery, res) {
+    const query = {
+        key: process.env.WEATHER_API_KEY,
+        lat: searchQuery.latitdue,
+        lon: searchQuery.longitude
+    };
+    // console.log("i am query",query);
+
+    const url = "http://api.weatherbit.io/v2.0/forecast/daily?";
+    superagent
+        .get(url)
+        .query(query)
+        .then(data => {
+            var weatherData = JSON.parse(data.text).data;
+            var weatherArr = [];
+            for (let i = 0; i < 8; i++) {
+                //console.log("hello im weatherData ...", weatherData);
+                var forecast = weatherData[i].weather.description;
+                var time = weatherData[i].valid_date;
+                var weatherObject = new Weather(forecast, time);
+                // console.log("hello im weatherObject", weatherObject);
+                weatherArr.push(weatherObject);
+            }
+            res.status(200).send(weatherArr);
+
+        })
+        .catch(error => {
+            //console.log(error.body);
+            //errorHandler('So sorry, something went really wrong', request, response);
         });
-        response.send(weatherDataMap);
-    }).catch(() => {
-        errorHandler('error in getting data from Api server ', request, response);
+}
+function getParkData(searchQuery, res) {
+    //console.log(searchQuery);
+    const query = {
+        api_key: process.env.PARK_API_KEY,
+        q: searchQuery,
+        limit: 10
+
+    };
+    // console.log("i am query",query);
+
+    const url = "https://developer.nps.gov/api/v1/parks?";
+    superagent
+        .get(url)
+        .query(query)
+        .then(data => {
+            var parkData = JSON.parse(data.text).data;
+            // console.log(parkData[0])
+            var parkArr = [];
+            for (let i = 0; i < 10; i++) {
+
+                var name = parkData[i].fullName;
+                var adress = parkData[i].addresses[0].line1;
+                var fee = parkData[i].fees;
+                var des = parkData[i].description;
+                var url = parkData[i].url;
+                var parkObject = new Park(name, adress, fee, des, url)
+                parkArr.push(parkObject);
+
+
+            }
+
+
+            res.status(200).send(parkArr);
+        })
+        .catch(error => {
+            //console.log(error.body);
+            //errorHandler('So sorry, something went really wrong', request, response);
+        });
+}
+
+
+//constructer 
+function CityLocation(searchQuery, displayName, lat, lon) {
+    this.searchQuery = searchQuery;
+    this.formatted_query = displayName;
+    this.latitdue = lat;
+    this.longitude = lon;
+}
+
+function Weather(forecast, time) {
+    this.forecast = forecast;
+    this.time = new Date(time).toDateString();
+}
+
+function Park(name, adress, fee, des, url) {
+    this.name = name;
+    this.adress = adress;
+    this.fee = fee;
+    this.description = des;
+    this.url = url;
+}
+
+
+
+client.connect().then(() => {
+    app.listen(PORT, () => {
+        console.log('the app is listening to port ' + PORT);
     });
-}
-function parkHandler(request,response){
-    let parkKey = process.env.PARK_API_KEY  ;
-    const latitude = request.query.latitude;
-    const longitude = request.query.longitude;
-    let url = `https://developer.nps.gov/api/v1/parks?latitude=${latitude}&longitude=${longitude}&api_key=${parkKey}&limit=1`;
-
-  superAgent0.get(url).then(parkData =>{
-
-    let parkData0 = parkData.body.data.map(element => {
-      const parkObject = new Park(element);
-      return parkObject;
-    });
-    response.send(parkData0);
-  }).catch(()=>{
-    errorHandler('error in getting data from Api server ',request,response);
-  });
-}
-
-// page Not found
-function pageNotFoundHandler(req, res) {
-    res.status(404).send('Not Found')
-}
-
-function errorHandler(error, req, res) {
-
-    res.status(500).send(error);
-}
+}).catch(error => {
+    console.log('an error occurred while connecting to database ' + error);
+});
 
 
-// Constructor
-function Location(city, data) {
-    this.search_query = city;
-    this.formatted_query = data[0].display_name;
-    this.latitude = data[0].lat;
-    this.longitude = data[0].lon;
-}
-function Weather(weatherDay) {
-    this.forecast = weatherDay.weather.description;
-    this.time = weatherDay.valid_date;
-}
-function Park(parkData) {
-    this.name = parkData.name;
-    this.address = parkData.address;
-    this.fee = parkData.fee;
-    this.description = parkData.description;
-    this.url = parkData.url;
-}
 
-app.listen(PORT, () => {
-    console.log(`app is listening on Port ${PORT}`)
-})

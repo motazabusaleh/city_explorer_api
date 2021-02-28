@@ -7,15 +7,16 @@ const postgress = require('pg');
 let app = express(); //init server
 app.use(cors());
 require('dotenv').config();
-const client = new postgress.Client(process.env.DATABASE_URL);
 const PORT = process.env.PORT;
 
-// const client = new postgress.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const client = new postgress.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 // routes - endpoints 
 app.get('/location', handlerLocation);
 app.get('/weather', weatherHandler);
 app.get('/parks', parkHandler)
+app.get('/movies', handleMovie);
+app.get('/yelp', handleYelp);
 app.get('*', errorHandler);
 
 
@@ -38,9 +39,94 @@ function parkHandler(req, res) {
     getParkData(searchQuery, res);
 
 }
+function handleMovie(req, res) {
+    try {
+        movieData(req, res)
+    } catch (error) {
+        res.status(500).send('Sorry! there is an error in getting data from Movies API ' + error)
+    }
+}
+
+function movieData(req, res) {
+    let url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIE_API_KEY}&query=${req.query.searchQuery}&limit=${20}`;
+
+    superagent.get(url).then(data => {
+        let arrMovies = [];
+        var moivesData = JSON.parse(data.text).results;
+        for (let i = 0; i < moivesData.length; i++) {
+
+            var moviesArr=  new Moive(
+                moivesData[i].title,
+                moivesData[i].overview,
+                moivesData[i].vote_average,
+                moivesData[i].vote_count,
+                'https://image.tmdb.org/t/p/w500' + moivesData[i].poster_path,
+                moivesData[i].popularity,
+                moivesData[i].release_date);
+                arrMovies.push(moviesArr)
+            
+        }
+        res.status(200).send(arrMovies);
+    }).catch(error => {
+        res.status(500).send('There was an error ' + error);
+
+    });
+}
 
 function errorHandler(req, res) {
     res.status(404).send({ status: 500, responseText: "Sorry, something went wrong 38" });
+}
+
+
+function handleYelp(req , res ) {
+    try {
+        yelpData(req, res)
+    } catch (error) {
+        res.status(500).send('Sorry, an error in rendering YELP' + error);
+    }
+
+}
+
+ 
+function yelpData ( req , res) {
+    
+    let key = process.env.YELP_API_KEY;
+
+    const query = {
+           latitude:req.query.latitude,
+           longitude:req.query.longitude,
+           term:'restaurants',
+           limit:5,
+           offset:req.query.page*5
+         
+    }
+    let url = 'https://api.yelp.com/v3/businesses/search';
+    superagent.
+    get(url).
+    set('Authorization', `Bearer ${key}`).
+    query(query).
+    then(data => {
+    
+            let yelpArray = [];
+          let  array = JSON.parse(data.text).businesses ; 
+
+            for(let index = 0 ; index< array.length;index++){
+                let name = array[index].name;
+                let image_url = array[index].image_url;
+                let price = array[index]. price;
+                let rating = array[index].rating;
+                let url = array[index].url;
+
+                let yelp = new CityYelp (name , image_url , price , rating , url);
+               yelpArray.push(yelp);
+
+            }
+            res.status(200).send(yelpArray);
+
+      }).catch((error) => {
+        res.status(500).send(" error getting data from yelpFunction" + error);
+      });
+
 }
 
 
@@ -79,7 +165,6 @@ function getLocationData(searchQuery, res) {
                 var dispalyName = result.display_name;
 
                 let cityLocation = new CityLocation(searchQuery, dispalyName, latitdue, longitdue);
-                // console.log("hello i am city location",cityLocation)
                 //insert
                 const dbQuery_insert =`INSERT INTO city(search_query,formatted_query,latitude,longitude) VALUES('${searchQuery}','${dispalyName}',${latitdue},${longitdue})`;
                 client.query(dbQuery_insert).then(data=>{
@@ -96,28 +181,7 @@ function getLocationData(searchQuery, res) {
         console.log(error)
     })
 
-    // const query = {
-    //     key: process.env.GEOCODE_API_KEY,
-    //     city: searchQuery,
-    //     limit: 1,
-    //     format: 'json'
-    // };
-
-    // let url = `https://us1.locationiq.com/v1/search.php?`;
-    // superagent.get(url).query(query).then(data => {
-    //     const result = data.body[0];
-    //     // console.log("hello i am the body ",result)
-    //     var longitdue = result.lon;
-    //     var latitdue = result.lat;
-    //     var dispalyName = result.display_name;
-
-    //     let cityLocation = new CityLocation(searchQuery, dispalyName, latitdue, longitdue);
-    //     // console.log("hello i am city location",cityLocation)
-
-    //     res.status(200).send(cityLocation);
-    // }).catch(error => {
-    //     //res.status(500).send('There was an error getting data from API ' + error);
-    // });
+    
 }
 
 function getWeatherData(searchQuery, res) {
@@ -213,7 +277,25 @@ function Park(name, adress, fee, des, url) {
     this.url = url;
 }
 
+function Moive(title, overview, average_votes, total_votes, image_url, popularity, released_on) {
+    this.title = title;
+    this.overview = overview;
+    this.average_votes = average_votes;
+    this.total_votes = total_votes;
+    this.image_url = image_url;
+    this.popularity = popularity;
+    this.released_on = released_on;
 
+}
+
+function CityYelp (name , img_url , price , rating , url) {
+    this.name=name;
+    this.image_url=img_url;
+    this.price=price;
+    this.rating=rating;
+    this.url=url;
+
+}
 
 client.connect().then(() => {
     app.listen(PORT, () => {
